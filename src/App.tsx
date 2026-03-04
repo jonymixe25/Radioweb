@@ -69,6 +69,10 @@ export default function App() {
   const [editData, setEditData] = useState({ title: '', artist: '' });
   const [isLive, setIsLive] = useState(false);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [queue, setQueue] = useState<Song[]>([]);
+  const [isAutoPlay, setIsAutoPlay] = useState(true);
+  const [onlineSearchResults, setOnlineSearchResults] = useState<any[]>([]);
+  const [isSearchingOnline, setIsSearchingOnline] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -287,8 +291,16 @@ export default function App() {
   };
 
   const nextSong = () => {
-    if (songs.length === 0) return;
-    setCurrentSongIndex((prev) => (prev + 1) % songs.length);
+    if (queue.length > 0) {
+      const nextFromQueue = queue[0];
+      setQueue(prev => prev.slice(1));
+      const index = songs.findIndex(s => s.id === nextFromQueue.id);
+      if (index !== -1) {
+        setCurrentSongIndex(index);
+      }
+    } else if (songs.length > 0) {
+      setCurrentSongIndex((prev) => (prev + 1) % songs.length);
+    }
     setIsPlaying(true);
   };
 
@@ -296,6 +308,51 @@ export default function App() {
     if (songs.length === 0) return;
     setCurrentSongIndex((prev) => (prev - 1 + songs.length) % songs.length);
     setIsPlaying(true);
+  };
+
+  const addToQueue = (song: Song) => {
+    setQueue(prev => [...prev, song]);
+  };
+
+  const removeFromQueue = (index: number) => {
+    setQueue(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const searchMusicOnline = async (query: string) => {
+    if (!query) return;
+    setIsSearchingOnline(true);
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Busca información detallada sobre la canción o artista "${query}". Devuelve una lista de 5 resultados posibles en formato JSON. Cada resultado debe tener: title, artist, album, year, genre. Solo devuelve el JSON puro.`,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      
+      const results = JSON.parse(response.text || "[]");
+      setOnlineSearchResults(results);
+    } catch (err) {
+      console.error("Error en búsqueda online", err);
+    } finally {
+      setIsSearchingOnline(false);
+    }
+  };
+
+  const importOnlineSong = async (songData: any) => {
+    try {
+      await fetch('/api/songs/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(songData),
+      });
+      fetchSongs();
+      alert(`"${songData.title}" se ha añadido a tu biblioteca (Simulado)`);
+    } catch (err) {
+      console.error("Error al importar canción", err);
+    }
   };
 
   useEffect(() => {
@@ -615,6 +672,12 @@ export default function App() {
                       <RadioTower className="w-4 h-4" /> Emisión en Vivo
                     </button>
                     <button 
+                      onClick={() => setPanelTab('online-search')}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${panelTab === 'online-search' ? 'bg-white/5 text-emerald-500' : 'text-white/60 hover:bg-white/5'}`}
+                    >
+                      <Search className="w-4 h-4" /> Buscador Web
+                    </button>
+                    <button 
                       onClick={() => setPanelTab('settings')}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${panelTab === 'settings' ? 'bg-white/5 text-emerald-500' : 'text-white/60 hover:bg-white/5'}`}
                     >
@@ -747,6 +810,13 @@ export default function App() {
                                 <td className="px-6 py-4 text-white/40 text-xs">{new Date(song.added_at).toLocaleDateString('es-ES')}</td>
                                 <td className="px-6 py-4 text-right">
                                   <div className="flex items-center justify-end gap-2">
+                                    <button 
+                                      onClick={() => addToQueue(song)}
+                                      className="p-2 text-white/20 hover:text-emerald-500 transition-colors"
+                                      title="Añadir a la cola"
+                                    >
+                                      <ListMusic className="w-4 h-4" />
+                                    </button>
                                     {editingSongId === song.id ? (
                                       <button onClick={() => saveSongEdit(song.id)} className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-colors">
                                         <Save className="w-4 h-4" />
@@ -863,6 +933,59 @@ export default function App() {
                     </div>
                   )}
 
+                  {panelTab === 'online-search' && (
+                    <div className="space-y-8">
+                      <div>
+                        <h2 className="text-3xl font-bold tracking-tight mb-2">Buscador Web de Música</h2>
+                        <p className="text-white/40 text-sm">Encuentra canciones en la red e impórtalas a tu biblioteca</p>
+                      </div>
+
+                      <div className="flex gap-4">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/20" />
+                          <input 
+                            type="text" 
+                            placeholder="Nombre de canción, artista o álbum..." 
+                            className="w-full bg-white/5 border border-white/10 rounded-2xl pl-12 pr-4 py-4 text-lg focus:outline-none focus:border-emerald-500 transition-colors"
+                            onKeyDown={(e) => e.key === 'Enter' && searchMusicOnline((e.target as HTMLInputElement).value)}
+                          />
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const input = document.querySelector('input[placeholder="Nombre de canción, artista o álbum..."]') as HTMLInputElement;
+                            searchMusicOnline(input.value);
+                          }}
+                          className="px-8 py-4 bg-emerald-500 text-black rounded-2xl font-bold hover:scale-105 transition-all shadow-xl shadow-emerald-500/20"
+                        >
+                          {isSearchingOnline ? 'Buscando...' : 'Buscar'}
+                        </button>
+                      </div>
+
+                      <div className="grid gap-4">
+                        {onlineSearchResults.map((result, idx) => (
+                          <div key={idx} className="p-6 bg-white/5 border border-white/5 rounded-2xl flex items-center justify-between group hover:border-emerald-500/30 transition-colors">
+                            <div className="flex items-center gap-6">
+                              <div className="w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center">
+                                <Music className="w-6 h-6 text-white/20" />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-lg">{result.title}</h4>
+                                <p className="text-sm text-white/60">{result.artist} — {result.album} ({result.year})</p>
+                                <span className="text-[10px] uppercase tracking-widest text-emerald-500 font-bold">{result.genre}</span>
+                              </div>
+                            </div>
+                            <button 
+                              onClick={() => importOnlineSong(result)}
+                              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-emerald-500 hover:text-black rounded-xl text-sm font-bold transition-all"
+                            >
+                              <Upload className="w-4 h-4" /> Importar
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {panelTab === 'settings' && (
                     <div className="max-w-xl space-y-8">
                       <div>
@@ -916,6 +1039,7 @@ export default function App() {
         <audio 
           ref={audioRef}
           src={`/uploads/${currentSong.filename}`}
+          autoPlay={isAutoPlay}
           onEnded={nextSong}
         />
       )}
@@ -932,6 +1056,19 @@ export default function App() {
               <p className="text-xs text-white/40 truncate">{isLive ? 'Escuchando señal directa' : (currentSong?.artist || settings.slogan)}</p>
             </div>
           </div>
+
+          {/* Queue Preview */}
+          {queue.length > 0 && (
+            <div className="hidden lg:flex items-center gap-4 px-6 border-l border-white/5">
+              <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center">
+                <ListMusic className="w-4 h-4 text-emerald-500" />
+              </div>
+              <div className="text-left">
+                <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Siguiente</p>
+                <p className="text-xs font-bold truncate max-w-[120px]">{queue[0].title}</p>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-6">
             <button onClick={prevSong} className="text-white/40 hover:text-white transition-colors"><SkipBack className="w-5 h-5" /></button>

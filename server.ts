@@ -174,6 +174,18 @@ async function startServer() {
     res.json({ songCount, requestCount, listeners: Math.floor(Math.random() * 500) + 1000 });
   });
 
+  app.post("/api/songs/import", (req, res) => {
+    const { title, artist } = req.body;
+    // In a real app, we would download the file. 
+    // Here we just add a record pointing to a placeholder or an existing file for demo purposes.
+    // We'll use the first available file in uploads or a dummy name.
+    const firstSong = db.prepare("SELECT filename FROM songs LIMIT 1").get();
+    const filename = firstSong ? firstSong.filename : "placeholder.mp3";
+    
+    const result = db.prepare("INSERT INTO songs (title, artist, filename) VALUES (?, ?, ?)").run(title, artist, filename);
+    res.json({ success: true, id: result.lastInsertRowid });
+  });
+
   app.post("/api/songs/upload", upload.single("audio"), (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No se subió ningún archivo" });
 
