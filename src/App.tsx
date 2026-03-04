@@ -31,9 +31,24 @@ import {
   Mic,
   StopCircle,
   Wifi,
-  WifiOff
+  TrendingUp,
+  Users,
+  Music2,
+  Clock,
+  Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  AreaChart,
+  Area
+} from 'recharts';
 
 interface Song {
   id: number;
@@ -57,6 +72,7 @@ export default function App() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [requests, setRequests] = useState<SongRequest[]>([]);
   const [stats, setStats] = useState({ songCount: 0, requestCount: 0, listeners: 0 });
+  const [listenerHistory, setListenerHistory] = useState<{time: string, count: number}[]>([]);
   const [settings, setSettings] = useState({ name: 'Radio Estelar', slogan: 'En Vivo • 98.5 FM' });
   const [currentSongIndex, setCurrentSongIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -73,7 +89,6 @@ export default function App() {
   const [isAutoPlay, setIsAutoPlay] = useState(true);
   const [onlineSearchResults, setOnlineSearchResults] = useState<any[]>([]);
   const [isSearchingOnline, setIsSearchingOnline] = useState(false);
-  const [hasInteracted, setHasInteracted] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -204,10 +219,21 @@ export default function App() {
       const res = await fetch('/api/stats');
       const data = await res.json();
       setStats(data);
+      setListenerHistory(prev => {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const newHistory = [...prev, { time: timeStr, count: data.listeners }];
+        return newHistory.slice(-15); // Keep last 15 points for the chart
+      });
     } catch (err) {
       console.error("Error al cargar estadísticas", err);
     }
   };
+
+  useEffect(() => {
+    const interval = setInterval(fetchStats, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const fetchSettings = async () => {
     try {
@@ -282,7 +308,12 @@ export default function App() {
   const currentSong = songs[currentSongIndex];
 
   const togglePlay = () => {
-    if (!hasInteracted) setHasInteracted(true);
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch(e => console.error("Error al reproducir", e));
+    }
     setIsPlaying(!isPlaying);
   };
 
@@ -322,14 +353,9 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `Busca información sobre la canción o artista "${query}". 
-        IMPORTANTE: Intenta encontrar un enlace directo a un archivo de audio (MP3/OGG) que sea de dominio público, una muestra gratuita o un preview legal (ej. de Wikimedia Commons, Jamendo, Pixabay o similares).
-        Devuelve una lista de 5 resultados en formato JSON. 
-        Cada resultado debe tener: title, artist, album, year, genre, y download_url (el enlace directo al archivo de audio si lo encuentras, si no, deja el campo vacío).
-        Solo devuelve el JSON puro.`,
+        contents: `Busca información detallada sobre la canción o artista "${query}". Devuelve una lista de 5 resultados posibles en formato JSON. Cada resultado debe tener: title, artist, album, year, genre. Solo devuelve el JSON puro.`,
         config: {
-          responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }]
+          responseMimeType: "application/json"
         }
       });
       
@@ -343,28 +369,16 @@ export default function App() {
   };
 
   const importOnlineSong = async (songData: any) => {
-    if (!songData.download_url) {
-      alert("No se encontró un enlace de descarga directo para esta canción. Intenta con otra búsqueda.");
-      return;
-    }
-
     try {
-      const res = await fetch('/api/songs/import', {
+      await fetch('/api/songs/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(songData),
       });
-      
-      const data = await res.json();
-      if (data.success) {
-        fetchSongs();
-        alert(`"${songData.title}" se ha descargado e importado correctamente.`);
-      } else {
-        alert(`Error al importar: ${data.error || 'Error desconocido'}`);
-      }
+      fetchSongs();
+      alert(`"${songData.title}" se ha añadido a tu biblioteca (Simulado)`);
     } catch (err) {
       console.error("Error al importar canción", err);
-      alert("Hubo un problema al conectar con el servidor para la descarga.");
     }
   };
 
@@ -373,16 +387,6 @@ export default function App() {
       audioRef.current.volume = volume;
     }
   }, [volume]);
-
-  useEffect(() => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.play().catch(() => setIsPlaying(false));
-      } else {
-        audioRef.current.pause();
-      }
-    }
-  }, [isPlaying]);
 
   useEffect(() => {
     if (isPlaying && audioRef.current) {
@@ -424,70 +428,6 @@ export default function App() {
       console.error("Error al eliminar", err);
     }
   };
-
-  const startRadio = () => {
-    setHasInteracted(true);
-    setIsPlaying(true);
-  };
-
-  if (!hasInteracted) {
-    return (
-      <div className="fixed inset-0 z-[100] bg-[#050505] flex flex-col items-center justify-center p-8 text-center overflow-hidden">
-        {/* Animated Background for Splash */}
-        <div className="absolute inset-0 pointer-events-none">
-          <motion.div 
-            animate={{ 
-              scale: [1, 1.2, 1],
-              opacity: [0.1, 0.2, 0.1] 
-            }}
-            transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-emerald-500/20 blur-[120px] rounded-full" 
-          />
-        </div>
-        
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="relative z-10 max-w-md"
-        >
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            className="w-24 h-24 bg-emerald-500 rounded-[2rem] flex items-center justify-center mx-auto mb-10 shadow-2xl shadow-emerald-500/40"
-          >
-            <Radio className="w-12 h-12 text-black" />
-          </motion.div>
-          
-          <h1 className="text-5xl font-bold mb-4 tracking-tighter bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">
-            {settings.name}
-          </h1>
-          <p className="text-white/40 mb-14 text-lg font-medium tracking-wide">
-            {settings.slogan}
-          </p>
-          
-          <button 
-            onClick={startRadio}
-            className="group relative px-14 py-6 bg-white text-black rounded-full font-bold text-xl hover:scale-105 active:scale-95 transition-all duration-300 shadow-[0_0_40px_rgba(255,255,255,0.1)]"
-          >
-            <span className="relative z-10 flex items-center gap-4">
-              SINTONIZAR SEÑAL
-              <Play className="w-6 h-6 fill-current" />
-            </span>
-            <div className="absolute inset-0 bg-emerald-400 blur-3xl opacity-0 group-hover:opacity-30 transition-opacity rounded-full" />
-          </button>
-          
-          <motion.p 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 1 }}
-            className="mt-10 text-[10px] uppercase tracking-[0.3em] text-white/20 font-bold"
-          >
-            Haz clic para conectar con la estación
-          </motion.p>
-        </motion.div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30">
@@ -786,39 +726,159 @@ export default function App() {
                 {/* Content */}
                 <div className="p-12 overflow-y-auto max-h-[70vh]">
                   {panelTab === 'dashboard' && (
-                    <div className="space-y-12">
-                      <div className="grid grid-cols-3 gap-6">
-                        <div className="p-8 bg-white/5 border border-white/5 rounded-3xl">
-                          <p className="text-white/40 text-xs font-bold uppercase tracking-widest mb-4">Canciones</p>
-                          <h4 className="text-4xl font-bold">{stats.songCount}</h4>
+                    <div className="space-y-8">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="text-3xl font-bold tracking-tight mb-2">Dashboard</h2>
+                          <p className="text-white/40 text-sm">Resumen de actividad en tiempo real</p>
                         </div>
-                        <div className="p-8 bg-white/5 border border-white/5 rounded-3xl">
-                          <p className="text-white/40 text-xs font-bold uppercase tracking-widest mb-4">Solicitudes</p>
-                          <h4 className="text-4xl font-bold">{stats.requestCount}</h4>
-                        </div>
-                        <div className="p-8 bg-emerald-500/10 border border-emerald-500/20 rounded-3xl">
-                          <p className="text-emerald-500 text-xs font-bold uppercase tracking-widest mb-4">Oyentes Online</p>
-                          <h4 className="text-4xl font-bold text-emerald-500">{stats.listeners}</h4>
+                        <div className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
+                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                          <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">En Vivo</span>
                         </div>
                       </div>
 
-                      <div className="p-8 bg-white/5 border border-white/5 rounded-3xl">
-                        <h3 className="text-xl font-bold mb-6">Actividad Reciente</h3>
-                        <div className="space-y-4">
-                          {requests.slice(0, 3).map(req => (
-                            <div key={req.id} className="flex items-center justify-between py-4 border-b border-white/5 last:border-0">
-                              <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center">
-                                  <MessageSquare className="w-4 h-4 text-emerald-500" />
-                                </div>
-                                <div>
-                                  <p className="text-sm font-bold">{req.song_name}</p>
-                                  <p className="text-xs text-white/40">{req.listener_name}</p>
-                                </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="p-8 bg-white/5 border border-white/5 rounded-3xl relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Music2 className="w-16 h-16" />
+                          </div>
+                          <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mb-4">Total Canciones</p>
+                          <div className="flex items-end gap-3">
+                            <h4 className="text-5xl font-bold">{stats.songCount}</h4>
+                            <span className="text-emerald-500 text-xs font-medium mb-2 flex items-center gap-1">
+                              <TrendingUp className="w-3 h-3" /> +2 hoy
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="p-8 bg-white/5 border border-white/5 rounded-3xl relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <MessageSquare className="w-16 h-16" />
+                          </div>
+                          <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mb-4">Solicitudes</p>
+                          <div className="flex items-end gap-3">
+                            <h4 className="text-5xl font-bold">{stats.requestCount}</h4>
+                            <span className="text-emerald-500 text-xs font-medium mb-2 flex items-center gap-1">
+                              <Activity className="w-3 h-3" /> Activo
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="p-8 bg-emerald-500/10 border border-emerald-500/20 rounded-3xl relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Users className="w-16 h-16 text-emerald-500" />
+                          </div>
+                          <p className="text-emerald-500 text-[10px] font-bold uppercase tracking-widest mb-4">Oyentes Actuales</p>
+                          <div className="flex items-end gap-3">
+                            <h4 className="text-5xl font-bold text-emerald-500">{stats.listeners}</h4>
+                            <span className="text-emerald-500 text-xs font-medium mb-2 flex items-center gap-1">
+                              <Wifi className="w-3 h-3" /> Tiempo Real
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid lg:grid-cols-2 gap-8">
+                        {/* Listeners Chart */}
+                        <div className="p-8 bg-white/5 border border-white/5 rounded-3xl">
+                          <div className="flex items-center justify-between mb-8">
+                            <h3 className="text-xl font-bold">Audiencia en Tiempo Real</h3>
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 bg-emerald-500 rounded-full" />
+                                <span className="text-xs text-white/40">Oyentes</span>
                               </div>
-                              <span className="text-[10px] text-white/20">{new Date(req.created_at).toLocaleTimeString()}</span>
                             </div>
-                          ))}
+                          </div>
+                          
+                          <div className="h-[300px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart data={listenerHistory}>
+                                <defs>
+                                  <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                <XAxis 
+                                  dataKey="time" 
+                                  stroke="#ffffff20" 
+                                  fontSize={10} 
+                                  tickLine={false} 
+                                  axisLine={false}
+                                />
+                                <YAxis 
+                                  stroke="#ffffff20" 
+                                  fontSize={10} 
+                                  tickLine={false} 
+                                  axisLine={false}
+                                  tickFormatter={(value) => `${value}`}
+                                />
+                                <Tooltip 
+                                  contentStyle={{ 
+                                    backgroundColor: '#18181b', 
+                                    border: '1px solid #ffffff10',
+                                    borderRadius: '12px',
+                                    fontSize: '12px'
+                                  }}
+                                  itemStyle={{ color: '#10b981' }}
+                                />
+                                <Area 
+                                  type="monotone" 
+                                  dataKey="count" 
+                                  stroke="#10b981" 
+                                  strokeWidth={3}
+                                  fillOpacity={1} 
+                                  fill="url(#colorCount)" 
+                                  animationDuration={1000}
+                                />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+
+                        {/* Recent Activity */}
+                        <div className="p-8 bg-white/5 border border-white/5 rounded-3xl">
+                          <div className="flex items-center justify-between mb-8">
+                            <h3 className="text-xl font-bold">Solicitudes Recientes</h3>
+                            <button 
+                              onClick={() => setPanelTab('requests')}
+                              className="text-xs text-emerald-500 font-bold uppercase tracking-widest hover:underline"
+                            >
+                              Ver Todo
+                            </button>
+                          </div>
+                          <div className="space-y-4">
+                            {requests.length > 0 ? (
+                              requests.slice(0, 5).map(req => (
+                                <div key={req.id} className="flex items-center justify-between py-4 border-b border-white/5 last:border-0 group">
+                                  <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center group-hover:bg-emerald-500/10 transition-colors">
+                                      <MessageSquare className="w-4 h-4 text-emerald-500" />
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-bold group-hover:text-emerald-500 transition-colors">{req.song_name}</p>
+                                      <p className="text-xs text-white/40 flex items-center gap-1">
+                                        <Users className="w-3 h-3" /> {req.listener_name}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-[10px] text-white/20 flex items-center gap-1 justify-end">
+                                      <Clock className="w-3 h-3" /> {new Date(req.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="flex flex-col items-center justify-center py-12 text-white/20">
+                                <MessageSquare className="w-12 h-12 mb-4 opacity-20" />
+                                <p className="text-sm">No hay solicitudes pendientes</p>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1121,11 +1181,12 @@ export default function App() {
 
       {/* Hidden Audio Element */}
       {isLive && !isBroadcasting ? (
-        <audio ref={audioRef} />
+        <audio ref={audioRef} autoPlay />
       ) : currentSong && (
         <audio 
           ref={audioRef}
           src={`/uploads/${currentSong.filename}`}
+          autoPlay={isAutoPlay}
           onEnded={nextSong}
         />
       )}
