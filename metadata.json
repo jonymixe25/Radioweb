@@ -1,0 +1,7 @@
+{
+  "name": "Radio Estelar",
+  "description": "Una plataforma de radio online completa con panel de control para gestionar música y transmisiones.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
