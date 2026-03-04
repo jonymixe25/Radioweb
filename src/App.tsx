@@ -307,14 +307,64 @@ export default function App() {
 
   const currentSong = songs[currentSongIndex];
 
+  useEffect(() => {
+    if (!audioRef.current) return;
+    
+    if (isLive && !isBroadcasting) {
+      setupLivePlayer();
+    } else {
+      // Cleanup live resources when not in live mode
+      if (mediaSourceRef.current) {
+        mediaSourceRef.current = null;
+        sourceBufferRef.current = null;
+        queueRef.current = [];
+      }
+      
+      if (currentSong) {
+        const songSrc = `/uploads/${currentSong.filename}`;
+        // Only update if different to avoid reloading
+        if (!audioRef.current.src.includes(songSrc)) {
+          audioRef.current.src = songSrc;
+          if (isPlaying || isAutoPlay) {
+            audioRef.current.play().catch(e => {
+              console.error("Error auto-playing song", e);
+            });
+          }
+        }
+      } else {
+        audioRef.current.src = "";
+        setIsPlaying(false);
+      }
+    }
+  }, [currentSong, isLive, isBroadcasting]);
+
   const togglePlay = () => {
     if (!audioRef.current) return;
+
     if (isPlaying) {
       audioRef.current.pause();
+      setIsPlaying(false);
     } else {
-      audioRef.current.play().catch(e => console.error("Error al reproducir", e));
+      // Ensure src is set if it's missing for some reason
+      if (!audioRef.current.src && currentSong && !isLive) {
+        audioRef.current.src = `/uploads/${currentSong.filename}`;
+      }
+      
+      if (isLive && !isBroadcasting && !audioRef.current.src) {
+        setupLivePlayer();
+      }
+
+      if (audioRef.current.src || (isLive && mediaSourceRef.current)) {
+        audioRef.current.play()
+          .then(() => setIsPlaying(true))
+          .catch(e => {
+            console.error("Error al reproducir", e);
+            setIsPlaying(false);
+          });
+      } else {
+        console.warn("No hay fuente de audio para reproducir");
+      }
     }
-    setIsPlaying(!isPlaying);
   };
 
   const nextSong = () => {
@@ -387,12 +437,6 @@ export default function App() {
       audioRef.current.volume = volume;
     }
   }, [volume]);
-
-  useEffect(() => {
-    if (isPlaying && audioRef.current) {
-      audioRef.current.play().catch(() => setIsPlaying(false));
-    }
-  }, [currentSongIndex]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1179,17 +1223,14 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      {/* Hidden Audio Element */}
-      {isLive && !isBroadcasting ? (
-        <audio ref={audioRef} autoPlay />
-      ) : currentSong && (
-        <audio 
-          ref={audioRef}
-          src={`/uploads/${currentSong.filename}`}
-          autoPlay={isAutoPlay}
-          onEnded={nextSong}
-        />
-      )}
+      {/* Audio Element */}
+      <audio 
+        ref={audioRef}
+        onEnded={nextSong}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        hidden
+      />
 
       {/* Footer Player Bar (Always visible) */}
       <footer className="fixed bottom-0 left-0 right-0 z-50 bg-black/40 backdrop-blur-2xl border-t border-white/5 px-8 py-4">
