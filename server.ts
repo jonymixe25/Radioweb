@@ -174,16 +174,35 @@ async function startServer() {
     res.json({ songCount, requestCount, listeners: Math.floor(Math.random() * 500) + 1000 });
   });
 
-  app.post("/api/songs/import", (req, res) => {
-    const { title, artist } = req.body;
-    // In a real app, we would download the file. 
-    // Here we just add a record pointing to a placeholder or an existing file for demo purposes.
-    // We'll use the first available file in uploads or a dummy name.
-    const firstSong = db.prepare("SELECT filename FROM songs LIMIT 1").get();
-    const filename = firstSong ? firstSong.filename : "placeholder.mp3";
+  app.post("/api/songs/import", async (req, res) => {
+    const { title, artist, download_url } = req.body;
     
-    const result = db.prepare("INSERT INTO songs (title, artist, filename) VALUES (?, ?, ?)").run(title, artist, filename);
-    res.json({ success: true, id: result.lastInsertRowid });
+    if (!download_url) {
+      return res.status(400).json({ success: false, error: "No se proporcionó URL de descarga" });
+    }
+
+    try {
+      const response = await fetch(download_url);
+      if (!response.ok) throw new Error(`Error al descargar: ${response.statusText}`);
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      // Generar nombre de archivo único
+      const ext = download_url.split('.').pop()?.split('?')[0] || 'mp3';
+      const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${ext}`;
+      const filePath = path.join(__dirname, "public", "uploads", filename);
+      
+      // Guardar archivo
+      fs.writeFileSync(filePath, buffer);
+      
+      // Insertar en DB
+      const result = db.prepare("INSERT INTO songs (title, artist, filename) VALUES (?, ?, ?)").run(title, artist, filename);
+      res.json({ success: true, id: result.lastInsertRowid });
+    } catch (err: any) {
+      console.error("Error en importación real:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.post("/api/songs/upload", upload.single("audio"), (req, res) => {

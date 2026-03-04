@@ -73,6 +73,7 @@ export default function App() {
   const [isAutoPlay, setIsAutoPlay] = useState(true);
   const [onlineSearchResults, setOnlineSearchResults] = useState<any[]>([]);
   const [isSearchingOnline, setIsSearchingOnline] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -281,12 +282,7 @@ export default function App() {
   const currentSong = songs[currentSongIndex];
 
   const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play().catch(e => console.error("Error al reproducir", e));
-    }
+    if (!hasInteracted) setHasInteracted(true);
     setIsPlaying(!isPlaying);
   };
 
@@ -326,9 +322,14 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `Busca información detallada sobre la canción o artista "${query}". Devuelve una lista de 5 resultados posibles en formato JSON. Cada resultado debe tener: title, artist, album, year, genre. Solo devuelve el JSON puro.`,
+        contents: `Busca información sobre la canción o artista "${query}". 
+        IMPORTANTE: Intenta encontrar un enlace directo a un archivo de audio (MP3/OGG) que sea de dominio público, una muestra gratuita o un preview legal (ej. de Wikimedia Commons, Jamendo, Pixabay o similares).
+        Devuelve una lista de 5 resultados en formato JSON. 
+        Cada resultado debe tener: title, artist, album, year, genre, y download_url (el enlace directo al archivo de audio si lo encuentras, si no, deja el campo vacío).
+        Solo devuelve el JSON puro.`,
         config: {
-          responseMimeType: "application/json"
+          responseMimeType: "application/json",
+          tools: [{ googleSearch: {} }]
         }
       });
       
@@ -342,16 +343,28 @@ export default function App() {
   };
 
   const importOnlineSong = async (songData: any) => {
+    if (!songData.download_url) {
+      alert("No se encontró un enlace de descarga directo para esta canción. Intenta con otra búsqueda.");
+      return;
+    }
+
     try {
-      await fetch('/api/songs/import', {
+      const res = await fetch('/api/songs/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(songData),
       });
-      fetchSongs();
-      alert(`"${songData.title}" se ha añadido a tu biblioteca (Simulado)`);
+      
+      const data = await res.json();
+      if (data.success) {
+        fetchSongs();
+        alert(`"${songData.title}" se ha descargado e importado correctamente.`);
+      } else {
+        alert(`Error al importar: ${data.error || 'Error desconocido'}`);
+      }
     } catch (err) {
       console.error("Error al importar canción", err);
+      alert("Hubo un problema al conectar con el servidor para la descarga.");
     }
   };
 
@@ -360,6 +373,16 @@ export default function App() {
       audioRef.current.volume = volume;
     }
   }, [volume]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.play().catch(() => setIsPlaying(false));
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [isPlaying]);
 
   useEffect(() => {
     if (isPlaying && audioRef.current) {
@@ -401,6 +424,70 @@ export default function App() {
       console.error("Error al eliminar", err);
     }
   };
+
+  const startRadio = () => {
+    setHasInteracted(true);
+    setIsPlaying(true);
+  };
+
+  if (!hasInteracted) {
+    return (
+      <div className="fixed inset-0 z-[100] bg-[#050505] flex flex-col items-center justify-center p-8 text-center overflow-hidden">
+        {/* Animated Background for Splash */}
+        <div className="absolute inset-0 pointer-events-none">
+          <motion.div 
+            animate={{ 
+              scale: [1, 1.2, 1],
+              opacity: [0.1, 0.2, 0.1] 
+            }}
+            transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-emerald-500/20 blur-[120px] rounded-full" 
+          />
+        </div>
+        
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className="relative z-10 max-w-md"
+        >
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            className="w-24 h-24 bg-emerald-500 rounded-[2rem] flex items-center justify-center mx-auto mb-10 shadow-2xl shadow-emerald-500/40"
+          >
+            <Radio className="w-12 h-12 text-black" />
+          </motion.div>
+          
+          <h1 className="text-5xl font-bold mb-4 tracking-tighter bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">
+            {settings.name}
+          </h1>
+          <p className="text-white/40 mb-14 text-lg font-medium tracking-wide">
+            {settings.slogan}
+          </p>
+          
+          <button 
+            onClick={startRadio}
+            className="group relative px-14 py-6 bg-white text-black rounded-full font-bold text-xl hover:scale-105 active:scale-95 transition-all duration-300 shadow-[0_0_40px_rgba(255,255,255,0.1)]"
+          >
+            <span className="relative z-10 flex items-center gap-4">
+              SINTONIZAR SEÑAL
+              <Play className="w-6 h-6 fill-current" />
+            </span>
+            <div className="absolute inset-0 bg-emerald-400 blur-3xl opacity-0 group-hover:opacity-30 transition-opacity rounded-full" />
+          </button>
+          
+          <motion.p 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1 }}
+            className="mt-10 text-[10px] uppercase tracking-[0.3em] text-white/20 font-bold"
+          >
+            Haz clic para conectar con la estación
+          </motion.p>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30">
@@ -1034,12 +1121,11 @@ export default function App() {
 
       {/* Hidden Audio Element */}
       {isLive && !isBroadcasting ? (
-        <audio ref={audioRef} autoPlay />
+        <audio ref={audioRef} />
       ) : currentSong && (
         <audio 
           ref={audioRef}
           src={`/uploads/${currentSong.filename}`}
-          autoPlay={isAutoPlay}
           onEnded={nextSong}
         />
       )}
